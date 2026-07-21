@@ -7,6 +7,7 @@ const authenticatedOctokit = process.env.GITHUB_TOKEN
   : null;
 
 const publicOctokit = new Octokit();
+let disableAuthenticatedGitHubForSession = false;
 
 export function parseGitHubUrl(repoUrl: string): RepositoryTarget {
   const url = new URL(repoUrl);
@@ -79,7 +80,7 @@ export async function fetchRepositoryFileText(
 }
 
 async function withGitHubFallback<T>(operation: (octokit: Octokit) => Promise<T>) {
-  if (!authenticatedOctokit) {
+  if (!authenticatedOctokit || disableAuthenticatedGitHubForSession) {
     return operation(publicOctokit);
   }
 
@@ -89,6 +90,8 @@ async function withGitHubFallback<T>(operation: (octokit: Octokit) => Promise<T>
     if (!isBadCredentialError(error)) {
       throw normalizeGitHubError(error);
     }
+
+    disableAuthenticatedGitHubForSession = true;
 
     try {
       return await operation(publicOctokit);
