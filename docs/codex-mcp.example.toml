@@ -1,0 +1,8 @@
+# Example Codex MCP config for AuditPilot.
+# Place this in the Codex config file used by your local Codex installation,
+# then restart Codex so it discovers the tool.
+
+[mcp_servers.auditpilot]
+command = "npm"
+args = ["--silent", "run", "mcp"]
+cwd = "C:\\Users\\USER1\\Downloads\\Ubuntu\\anu\\hackaton\\audit-pilot"
