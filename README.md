@@ -64,7 +64,8 @@ Use `--silent` for stdio clients so npm does not print banner text into the MCP 
 
 Available MCP tools:
 
-- `clone_and_parse_contract`: accepts `{ "repoUrl": "https://github.com/org/repo" }` and returns parsed repository metadata plus `ContractUnit[]` with file paths, unit names, source code snippets, external-call signals, and metadata. It does not return audit findings.
+- `parse_local_contract`: accepts `{ "repoPath": "C:\\path\\to\\already-cloned-repo" }` and returns parsed repository metadata plus `ContractUnit[]` from local files. This is available on the local stdio MCP server only, avoids cloning, and avoids GitHub API usage. It does not return audit findings.
+- `clone_and_parse_contract`: accepts `{ "repoUrl": "https://github.com/org/repo" }` and returns parsed repository metadata plus `ContractUnit[]` with file paths, unit names, source code snippets, external-call signals, and metadata. Use this for remote MCP clients or repos that are not already cloned. It does not return audit findings.
 - `get_vulnerability_checklist`: accepts `{ "chain": "solidity" }` or `{ "chain": "solana" }` and returns ecosystem-specific vulnerability categories for the calling agent to reason through.
 - `search_solodit_findings`: accepts `{ "keywords": "...", "languages": ["solidity"], "tags": ["..."] }` and returns matching historical Solodit/Cyfrin findings for grounding. It is a deterministic HTTP lookup, not an LLM call.
 
@@ -125,17 +126,21 @@ npm install
 
 ### 2. Configure Optional MCP Env
 
-Create `.env` or `.env.local` in the project root. OpenAI is **not** required for MCP because Codex does the reasoning in the user's own session.
+Create `.env` or `.env.local` in the project root. For local MCP, OpenAI and Supabase env vars are **not** required because Codex does the reasoning in the user's own session and the MCP server only parses code / searches references.
+
+Minimal local MCP `.env`:
 
 ```bash
-GITHUB_TOKEN=optional_github_token_for_higher_rate_limits
+GITHUB_TOKEN=
 SOLODIT_API_URL=https://solodit.cyfrin.io/api/v1/solodit
-SOLODIT_API_KEY=optional_solodit_key
-CYFRIN_API_KEY=optional_solodit_key
+SOLODIT_API_KEY=
+CYFRIN_API_KEY=
 AUDITPILOT_USE_SOLODIT=true
 ```
 
-If `GITHUB_TOKEN` is omitted, public GitHub parsing still works until GitHub's unauthenticated rate limit is reached.
+`GITHUB_TOKEN` is optional and only helps with GitHub API rate limits when using `clone_and_parse_contract`. It is not needed for `parse_local_contract` on already-cloned repos.
+
+Put a Solodit/Cyfrin key in either `SOLODIT_API_KEY` or `CYFRIN_API_KEY` if you want historical precedent search. Leave both empty if you only want local parsing and checklists.
 
 ### 3. Smoke-Test The MCP Server
 
@@ -146,7 +151,8 @@ npx tsx scripts\mcp-smoke.ts
 Expected output:
 
 ```text
-TOOLS=clone_and_parse_contract,get_vulnerability_checklist,search_solodit_findings
+TOOLS=parse_local_contract,clone_and_parse_contract,get_vulnerability_checklist,search_solodit_findings
+LOCAL_PARSE_OK=true
 CHECKLIST_OK=true
 SOLODIT_OK=true
 PARSE_OK=true
@@ -184,12 +190,31 @@ Use the AuditPilot MCP server to audit https://github.com/foundry-rs/forge-std
 
 Expected behavior:
 
-1. Codex calls `clone_and_parse_contract` to parse the repo as Solidity.
-2. Codex calls `get_vulnerability_checklist` for Solidity audit categories.
-3. Codex optionally calls `search_solodit_findings` for historical precedent.
-4. Codex reasons over the returned data in its own session and produces findings.
+1. If the repo is already cloned locally, Codex calls `parse_local_contract` with the local path and avoids GitHub entirely.
+2. If only a GitHub URL is available, Codex calls `clone_and_parse_contract` to parse the repo as Solidity.
+3. Codex calls `get_vulnerability_checklist` for Solidity audit categories.
+4. Codex optionally calls `search_solodit_findings` for historical precedent.
+5. Codex reasons over the returned data in its own session and produces findings.
 
 AuditPilot MCP intentionally returns raw parsed data and references, not a finished LLM-generated audit. That keeps model usage on the developer's own Codex/OpenAI account.
+
+### Audit An Already-Cloned Repo
+
+For local Codex use, prefer `parse_local_contract` when the target repo is already on your machine. This avoids another clone, avoids GitHub rate limits, and works better for private repos that Codex can read locally.
+
+Example prompt from inside or near a cloned repo:
+
+```text
+Use the AuditPilot local MCP server to audit this already-cloned repository. Prefer parse_local_contract with the local repo path instead of clone_and_parse_contract.
+```
+
+You can also provide an explicit path:
+
+```text
+Use the AuditPilot local MCP server to audit C:\\Users\\USER1\\Downloads\\Ubuntu\\anu\\hackaton\\some-contract-repo. Prefer parse_local_contract; do not clone it again.
+```
+
+`parse_local_contract` is intentionally not exposed by the public Railway MCP server, because a remote public server cannot see a user's local files and should not expose filesystem-reading tools.
 
 ## Deploy MCP On Railway
 
@@ -255,3 +280,91 @@ Expected output:
 HTTP_TOOLS=clone_and_parse_contract,get_vulnerability_checklist,search_solodit_findings
 HTTP_CHECKLIST_OK=true
 ```
+
+## Install The Remote MCP In Codex
+
+Use this when you want Codex to connect to the deployed Railway MCP instead of starting the local stdio server.
+
+1. Open your Codex config file:
+
+```powershell
+notepad $env:USERPROFILE\.codex\config.toml
+```
+
+On macOS/Linux, edit:
+
+```bash
+~/.codex/config.toml
+```
+
+2. Add the remote MCP server:
+
+```toml
+[mcp_servers.auditpilot_remote]
+url = "https://audit-pilot-production-ee9b.up.railway.app/mcp"
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+```
+
+3. Save the file and restart Codex.
+
+4. Ask Codex:
+
+```text
+Use the auditpilot_remote MCP server to audit https://github.com/foundry-rs/forge-std
+```
+
+Expected behavior:
+
+1. Codex connects to the Railway `/mcp` endpoint.
+2. Codex calls `clone_and_parse_contract` to parse the repository from its GitHub URL.
+3. Codex calls `get_vulnerability_checklist` for the detected chain.
+4. Codex optionally calls `search_solodit_findings` for historical precedent.
+5. Codex performs the reasoning in the user's own session and returns the audit report.
+
+The remote Railway MCP does not expose `parse_local_contract`; local filesystem parsing is only available through the local stdio MCP server.
+
+### Remote MCP With A Bearer Token
+
+If the Railway deployment sets `MCP_AUTH_TOKEN`, configure Codex like this instead:
+
+```toml
+[mcp_servers.auditpilot_remote]
+url = "https://audit-pilot-production-ee9b.up.railway.app/mcp"
+bearer_token_env_var = "AUDITPILOT_MCP_TOKEN"
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+```
+
+Then set the token locally before starting Codex.
+
+PowerShell:
+
+```powershell
+setx AUDITPILOT_MCP_TOKEN "your-remote-mcp-token"
+```
+
+macOS/Linux:
+
+```bash
+export AUDITPILOT_MCP_TOKEN="your-remote-mcp-token"
+```
+
+For public demos, leaving `MCP_AUTH_TOKEN` empty is easiest. For long-running public deployments, set it so strangers cannot use your GitHub or Solodit quota.
+
+## Remote MCP Token Safety
+
+A deployed MCP server uses the environment variables configured on that server. If you put your own `GITHUB_TOKEN` or `SOLODIT_API_KEY` on Railway, every remote MCP user is indirectly using that server-side token when they call the parsing or Solodit tools.
+
+Recommended options:
+
+1. For a public demo endpoint, leave `GITHUB_TOKEN` empty unless you need higher GitHub rate limits. Public GitHub repos can still be parsed without it until GitHub's unauthenticated limit is reached.
+2. Never use a personal GitHub token with broad private-repo access on an unauthenticated public MCP endpoint.
+3. If you need a token, use a separate fine-grained/bot token with the smallest possible read-only access, and avoid granting private repositories unless the endpoint is protected.
+4. Set `MCP_AUTH_TOKEN` on Railway when you want only trusted users to call your deployed MCP server.
+5. For serious use, users should clone AuditPilot and run the local stdio MCP, or deploy their own Railway MCP with their own GitHub/Solodit keys.
+
+AuditPilot MCP does not need an OpenAI API key. The connected Codex or ChatGPT session does the vulnerability reasoning with the user's own model access.
+
+
+

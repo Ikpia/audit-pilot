@@ -137,7 +137,7 @@ async function handleMcp(req: IncomingMessage, res: ServerResponse) {
       return;
     }
 
-    const server = createAuditPilotMcpServer();
+    const server = createAuditPilotMcpServer({ enableLocalParsing: false });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID()
     });

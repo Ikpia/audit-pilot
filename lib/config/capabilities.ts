@@ -1,12 +1,22 @@
-﻿export function getAuditPilotCapabilities() {
+export function getAuditPilotCapabilities() {
   return {
     ecosystems: ["solidity", "solana-anchor"],
-    surfaces: ["web-app", "http-api", "mcp-stdio"],
-    tools: ["audit_contract_repo"],
+    surfaces: ["web-app", "http-api", "mcp-stdio", "mcp-streamable-http"],
+    tools: [
+      "parse_local_contract",
+      "clone_and_parse_contract",
+      "get_vulnerability_checklist",
+      "search_solodit_findings"
+    ],
     apis: {
+      localFilesystem: {
+        status: "available-on-stdio-mcp",
+        required: false,
+        env: []
+      },
       github: {
         status: process.env.GITHUB_TOKEN ? "token-configured" : "unauthenticated",
-        required: true,
+        required: false,
         env: ["GITHUB_TOKEN"]
       },
       openaiResponses: {

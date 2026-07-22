@@ -38,7 +38,7 @@ export async function parseContractRepository(repoUrl: string): Promise<ParsedCo
   };
 }
 
-function enrichContractUnit(
+export function enrichContractUnit(
   unit: ContractUnit,
   chain: SmartContractEcosystem,
   sourceCode: string
