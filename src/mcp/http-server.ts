@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type RequestListener, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createAuditPilotMcpServer } from "./createServer";
@@ -13,7 +13,20 @@ type McpSession = {
 };
 
 const sessions = new Map<string, McpSession>();
-const port = Number(process.env.MCP_HTTP_PORT ?? process.env.PORT ?? 8787);
+const host = "0.0.0.0";
+
+function parsePort(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  const port = Number(value);
+  return Number.isInteger(port) && port > 0 ? port : undefined;
+}
+
+const ports = Array.from(
+  new Set([parsePort(process.env.MCP_HTTP_PORT), parsePort(process.env.PORT), 8787].filter((port): port is number => Boolean(port)))
+);
 
 function setCorsHeaders(res: ServerResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -150,7 +163,7 @@ async function handleMcp(req: IncomingMessage, res: ServerResponse) {
   await session.transport.handleRequest(req, res, body);
 }
 
-const httpServer = createServer((req, res) => {
+const requestListener: RequestListener = (req, res) => {
   const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
 
   if (pathname === "/health") {
@@ -158,7 +171,8 @@ const httpServer = createServer((req, res) => {
       ok: true,
       service: "auditpilot-mcp",
       transport: "streamable-http",
-      sessions: sessions.size
+      sessions: sessions.size,
+      ports
     });
     return;
   }
@@ -185,8 +199,17 @@ const httpServer = createServer((req, res) => {
     }
     res.end();
   });
-});
+};
 
-httpServer.listen(port, () => {
-  console.error(`AuditPilot MCP HTTP server listening on port ${port}`);
-});
+for (const port of ports) {
+  const httpServer = createServer(requestListener);
+
+  httpServer.on("error", (error: NodeJS.ErrnoException) => {
+    console.error(`AuditPilot MCP HTTP server failed on ${host}:${port}`, error);
+    process.exit(1);
+  });
+
+  httpServer.listen(port, host, () => {
+    console.error(`AuditPilot MCP HTTP server listening on ${host}:${port}`);
+  });
+}
