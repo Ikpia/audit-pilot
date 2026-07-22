@@ -1,4 +1,4 @@
-﻿# AuditPilot
+# AuditPilot
 
 AuditPilot is a Codex-native smart contract security agent for OpenAI Build Week.
 It starts with Solidity and Solana/Anchor support, then normalizes both stacks into one audit pipeline that can be upgraded with GPT-5.6 tool-calling Solodit-style research grounding, and Codex-generated patches.
@@ -111,5 +111,147 @@ ChatGPT developer mode connection:
 - `POST /api/audit` runs an audit from the web app or any HTTP client.
 - `GET /api/capabilities` reports enabled integrations and required env vars.
 - `npm --silent run mcp` starts the stdio MCP server for Codex-compatible clients.
+## Test MCP With forge-std
 
+You can test AuditPilot's MCP surface locally with the public Forge standard-library repository: <https://github.com/foundry-rs/forge-std>.
 
+### 1. Clone AuditPilot
+
+```bash
+git clone <your-auditpilot-repo-url>
+cd audit-pilot
+npm install
+```
+
+### 2. Configure Optional MCP Env
+
+Create `.env` or `.env.local` in the project root. OpenAI is **not** required for MCP because Codex does the reasoning in the user's own session.
+
+```bash
+GITHUB_TOKEN=optional_github_token_for_higher_rate_limits
+SOLODIT_API_URL=https://solodit.cyfrin.io/api/v1/solodit
+SOLODIT_API_KEY=optional_solodit_key
+CYFRIN_API_KEY=optional_solodit_key
+AUDITPILOT_USE_SOLODIT=true
+```
+
+If `GITHUB_TOKEN` is omitted, public GitHub parsing still works until GitHub's unauthenticated rate limit is reached.
+
+### 3. Smoke-Test The MCP Server
+
+```bash
+npx tsx scripts\mcp-smoke.ts
+```
+
+Expected output:
+
+```text
+TOOLS=clone_and_parse_contract,get_vulnerability_checklist,search_solodit_findings
+CHECKLIST_OK=true
+SOLODIT_OK=true
+PARSE_OK=true
+```
+
+### 4. Add AuditPilot To Codex
+
+Add this to your Codex config file, usually `~/.codex/config.toml` on macOS/Linux or `C:\Users\<you>\.codex\config.toml` on Windows:
+
+```toml
+[mcp_servers.auditpilot]
+command = "npm"
+args = ["--silent", "run", "mcp"]
+cwd = "C:\\absolute\\path\\to\\audit-pilot"
+```
+
+On this machine the local path is:
+
+```toml
+[mcp_servers.auditpilot]
+command = "npm"
+args = ["--silent", "run", "mcp"]
+cwd = "C:\\Users\\USER1\\Downloads\\Ubuntu\\anu\\hackaton\\audit-pilot"
+```
+
+Restart Codex after editing the config.
+
+### 5. Ask Codex To Audit forge-std
+
+In Codex, ask:
+
+```text
+Use the AuditPilot MCP server to audit https://github.com/foundry-rs/forge-std
+```
+
+Expected behavior:
+
+1. Codex calls `clone_and_parse_contract` to parse the repo as Solidity.
+2. Codex calls `get_vulnerability_checklist` for Solidity audit categories.
+3. Codex optionally calls `search_solodit_findings` for historical precedent.
+4. Codex reasons over the returned data in its own session and produces findings.
+
+AuditPilot MCP intentionally returns raw parsed data and references, not a finished LLM-generated audit. That keeps model usage on the developer's own Codex/OpenAI account.
+
+## Deploy MCP On Railway
+
+AuditPilot's local MCP server uses stdio for Codex on your own machine. Railway needs an HTTP process, so this repo also includes a Streamable HTTP MCP entrypoint at `src/mcp/http-server.ts`.
+
+Railway uses `railway.json` and starts the MCP server with:
+
+```bash
+npm run mcp:http
+```
+
+The deployed endpoints are:
+
+- `/mcp`: Streamable HTTP MCP endpoint for remote MCP clients.
+- `/health`: Railway health check endpoint.
+- `/mcp-info`: Small JSON info page listing the exposed tool names.
+
+### Railway Deployment Steps
+
+1. Push this repository to GitHub.
+2. In Railway, create a new project from the GitHub repo.
+3. Let Railway use the included `railway.json`; it will run `npm run mcp:http`.
+4. Add environment variables in Railway:
+
+```bash
+GITHUB_TOKEN=
+SOLODIT_API_URL=https://solodit.cyfrin.io/api/v1/solodit
+SOLODIT_API_KEY=
+CYFRIN_API_KEY=
+AUDITPILOT_USE_SOLODIT=true
+MCP_AUTH_TOKEN=
+```
+
+`PORT` is set automatically by Railway. `MCP_AUTH_TOKEN` is optional; if you set it, clients must send `Authorization: Bearer <token>` when calling `/mcp`. Do not add an OpenAI key to the MCP deployment. The MCP server is deterministic and the connected Codex or ChatGPT session does the reasoning with its own model access.
+
+5. After deployment, open:
+
+```text
+https://your-railway-domain.up.railway.app/health
+```
+
+You should see `{ "ok": true, "service": "auditpilot-mcp" }`.
+
+6. Use this as the remote MCP URL in clients that support Streamable HTTP MCP:
+
+```text
+https://your-railway-domain.up.railway.app/mcp
+```
+
+If your Codex client only supports local stdio MCP, keep using the local config shown above. The Railway deployment is mainly for remote MCP clients such as ChatGPT developer mode or any MCP host that supports Streamable HTTP.
+
+### Test The HTTP MCP Locally
+
+Before deploying, run:
+
+```bash
+npm run mcp:smoke:http
+```
+
+Expected output:
+
+```text
+HTTP_TOOLS=clone_and_parse_contract,get_vulnerability_checklist,search_solodit_findings
+HTTP_CHECKLIST_OK=true
+```
