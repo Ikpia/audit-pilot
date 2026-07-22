@@ -13,7 +13,7 @@ type McpSession = {
 };
 
 const sessions = new Map<string, McpSession>();
-const port = Number(process.env.PORT ?? process.env.MCP_HTTP_PORT ?? 8787);
+const port = Number(process.env.MCP_HTTP_PORT ?? process.env.PORT ?? 8787);
 
 function setCorsHeaders(res: ServerResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
